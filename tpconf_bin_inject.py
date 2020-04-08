@@ -259,9 +259,12 @@ if __name__ == '__main__':
     print("OK: Config decoded, injecting root password…")
     xmlstring = xmldata.decode("utf-8")
 
-    xmlstring = xmlstring.replace("<User instance=2 >\n          <Enable val=0 />\n          <Level val=2 />\n          <Username val=root />\n          \n        </User>", "<User instance=2 >\n          <Enable val=1 />\n          <Level val=2 />\n          <Username val=root />\n          <Password val=root />\n        </User>")
+    to_be_replaced = "<User instance=2 >\n          <Enable val=0 />\n          <Level val=2 />\n          <Username val=root />\n          \n        </User>"
+    replacer_str = "<User instance=2 >\n          <Enable val=1 />\n          <Level val=2 />\n          <Username val=root />\n          <Password val=root />\n        </User>"
 
-    if "<User instance=2 >\n          <Enable val=1 />\n          <Level val=2 />\n          <Username val=root />\n          <Password val=root />\n        </User>" in xmlstring:
+    xmlstring = xmlstring.replace(to_be_replaced, replacer_str)
+
+    if replacer_str in xmlstring:
         print("YES: root account is injected successfully!")
     else:
         print("NO: root account is NOT injected successfully. Please use `tpconf_bin_xml.py` to dig deeper.")
