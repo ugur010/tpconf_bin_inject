@@ -270,9 +270,6 @@ if __name__ == '__main__':
     print("OK: Injection complete, repackaging…")
     finalxml = xmlstring.encode()
 
-    with open("test.xml", "wb") as f:
-        f.write(finalxml)
-
     if b'W9980' in finalxml:
         print('OK: W9980 XML file - hashing, compressing and encrypting…')
         md5hash = md5(finalxml).digest()
