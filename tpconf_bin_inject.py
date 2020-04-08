@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 
-# Copyright 2018 Alain Ducharme
+# tpconf_bin_xml
+# Copyright (C) 2018  Alain Ducharme
+#
+# tpconf_bin_inject
+# Copyright (C) 2018  Alain Ducharme
+# Copyright (C) 2020  İlteriş Eroğlu (linuxgemini)
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -16,9 +21,9 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 # Description:
-# Command line utility to convert TP-Link router backup config files:
-#   - conf.bin => decrypt, md5hash and uncompress => conf.xml
-#   - conf.xml => compress, md5hash and encrypt   => conf.bin
+# Command line utility to inject and enable root credentials on some
+# TP-Link modem router backup config files from binary to XML and back:
+#   - conf.bin => decrypt, md5hash, uncompress, inject, compress, md5hash, encrypt => outconf.bin
 
 import argparse
 from hashlib import md5
@@ -27,7 +32,7 @@ from struct import pack_into, unpack_from
 
 from Crypto.Cipher import DES   # apt install python3-crypto (OR pip install pycryptodome ?)
 
-__version__ = '0.2.1'
+__version__ = '0.0.1'
 
 def compress(src):
     '''Compress buffer'''
@@ -191,20 +196,25 @@ def check_size_endianness(src):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='TP-Link router config file processor.')
-    parser.add_argument('infile', help='input file (e.g. conf.bin or conf.xml)')
-    parser.add_argument('outfile', help='output file (e.g. conf.bin or conf.xml)')
+    parser.add_argument('infile', help='input file (e.g. conf.bin)')
+
+    # parser.add_argument('outfile', help='output file (e.g. conf.bin or conf.xml)')
+
     parser.add_argument('-l', '--littleendian', action='store_true',
                         help='Use little-endian (default: big-endian)')
-    parser.add_argument('-n', '--newline', action='store_true',
-                        help='Replace EOF NULL with newline (after uncompress)')
+
+    # parser.add_argument('-n', '--newline', action='store_true',
+    #                    help='Replace EOF NULL with newline (after uncompress)')
+
     parser.add_argument('-o', '--overwrite', action='store_true',
                         help='Overwrite output file')
+
     args = parser.parse_args()
 
     if path.getsize(args.infile) > 0x20000:
         print('ERROR: Input file too large for a TP-Link config file!')
         exit()
-    if not args.overwrite and path.exists(args.outfile):
+    if not args.overwrite and path.exists("outconf.bin"):
         print('ERROR: Output file exists, use -o to overwrite')
         exit()
 
@@ -216,49 +226,65 @@ if __name__ == '__main__':
     with open(args.infile, 'rb') as f:
         src = f.read()
 
-    if src.startswith(b'<?xml'):
-        if b'W9980' in src:
-            print('OK: W9980 XML file - hashing, compressing and encrypting…')
-            md5hash = md5(src).digest()
-            size, dst = compress(md5hash + src)
-            with open(args.outfile, 'wb') as f:
-                f.write(crypto.encrypt(bytes(dst)))
-        else:
-            print('OK: XML file - compressing, hashing and encrypting…')
-            size, dst = compress(src)
-            with open(args.outfile, 'wb') as f:
-                f.write(crypto.encrypt(md5(dst[:size]).digest() + dst))
+    xmldata = None
+    # Assuming encrypted config file
+    if len(src) & 7: # Encrypted file length must be multiple of 8
+        print('ERROR: Wrong input file type!')
+        exit()
+    src = crypto.decrypt(src)
+    if src[16:21] == b'<?xml':  # XML (not compressed?)
+        verify(src)
+        print('OK: BIN file decrypted, MD5 hash verified…')
+        xmldata = src[16:]
+    elif src[20:27] == b'<\0\0?xml':  # compressed XML (W9970)
+        verify(src)
+        src = src[16:]
+        check_size_endianness(src)
+        print('OK: BIN file decrypted, MD5 hash verified, uncompressing…')
+        xmldata = uncompress(src)
+    elif src[22:29] == b'<\0\0?xml':  # compressed XML (W9980)
+        check_size_endianness(src)
+        print('OK: BIN file decrypted, uncompressing…')
+        dst = uncompress(src)
+        verify(dst)
+        print('OK: MD5 hash verified')
+        xmldata = dst[16:]
     else:
-        xml = None
-        # Assuming encrypted config file
-        if len(src) & 7: # Encrypted file length must be multiple of 8
-            print('ERROR: Wrong input file type!')
-            exit()
-        src = crypto.decrypt(src)
-        if src[16:21] == b'<?xml':  # XML (not compressed?)
-            verify(src)
-            print('OK: BIN file decrypted, MD5 hash verified…')
-            xml = src[16:]
-        elif src[20:27] == b'<\0\0?xml':  # compressed XML (W9970)
-            verify(src)
-            src = src[16:]
-            check_size_endianness(src)
-            print('OK: BIN file decrypted, MD5 hash verified, uncompressing…')
-            xml = uncompress(src)
-        elif src[22:29] == b'<\0\0?xml':  # compressed XML (W9980)
-            check_size_endianness(src)
-            print('OK: BIN file decrypted, uncompressing…')
-            dst = uncompress(src)
-            verify(dst)
-            print('OK: MD5 hash verified')
-            xml = dst[16:]
-        else:
-            print('ERROR: Unrecognized file type!')
-            exit()
+        print('ERROR: Unrecognized file type!')
+        exit()
 
-        if args.newline:
-            if xml[-1] == 0:    # NULL
-                xml[-1] = 0xa   # LF
-        with open(args.outfile, 'wb') as f:
-            f.write(xml)
-    print('Done.')
+    if xmldata[-1] == 0:    # NULL
+        del xmldata[-1]     # gone
+    
+    print("OK: Config decoded, injecting root password…")
+    xmlstring = xmldata.decode("utf-8")
+
+    xmlstring = xmlstring.replace("<User instance=2 >\n          <Enable val=0 />\n          <Level val=2 />\n          <Username val=root />\n          \n        </User>", "<User instance=2 >\n          <Enable val=1 />\n          <Level val=2 />\n          <Username val=root />\n          <Password val=root />\n        </User>")
+
+    if "<User instance=2 >\n          <Enable val=1 />\n          <Level val=2 />\n          <Username val=root />\n          <Password val=root />\n        </User>" in xmlstring:
+        print("YES: root account is injected successfully!")
+    else:
+        print("NO: root account is NOT injected successfully. Please use `tpconf_bin_xml.py` to dig deeper.")
+        exit()
+
+    print("OK: Injection complete, repackaging…")
+    finalxml = xmlstring.encode()
+
+    with open("test.xml", "wb") as f:
+        f.write(finalxml)
+
+    if b'W9980' in finalxml:
+        print('OK: W9980 XML file - hashing, compressing and encrypting…')
+        md5hash = md5(finalxml).digest()
+        size, dst = compress(md5hash + finalxml)
+        # FILE_WRITE_ONE
+        with open("outconf.bin", 'wb') as f:
+            f.write(crypto.encrypt(bytes(dst)))
+    else:
+        print('OK: XML file - compressing, hashing and encrypting…')
+        size, dst = compress(finalxml)
+        # FILE_WRITE_TWO
+        with open("outconf.bin", 'wb') as f:
+            f.write(crypto.encrypt(md5(dst[:size]).digest() + dst))
+
+    print('Done! If everything went perfectly, your root password should be "root".')
