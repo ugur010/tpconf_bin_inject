@@ -1,3 +1,6 @@
 conf.bin
 conf.xml
 outconf.bin
+__pycache__
+dist
+output

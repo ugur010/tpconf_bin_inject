@@ -1,0 +1,32 @@
+name: CI-exebuild
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Setup Python
+      uses: actions/setup-python@v1.2.0
+      with:
+        python-version: 3.7
+        architecture: x64
+
+    - name: pip install deps
+      run: pip install pycryptodome auto-py-to-exe
+
+    - name: pyinstaller
+      run: pyinstaller -y -F -i hash.ico  tpconf_bin_inject.py
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v1.0.0
+      with:
+        name: windows-build
+        path: output/tpconf_bin_inject.exe
